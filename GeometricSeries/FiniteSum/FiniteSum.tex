@@ -1,0 +1,38 @@
+\documentclass{article}
+\usepackage{amsmath}
+
+
+\title{Sum of Finite Geometric Series}
+\author{Steven Xia}
+
+
+\begin{document}
+\maketitle
+
+\section{Statement}
+$$\sum_{k=0}^n b^k = \frac{b^{n+1} - 1}{b - 1}$$
+
+\section{Proof}
+
+\subsection{Verification by Intuition}
+Written in base $b$, $b^k$ is represented as a one followed by $k$ zeroes.
+As such, the sum in the statement above is represented as $n$ ones in base $b$.
+
+Continuing, $b^{n+1}$ is represented as a one followed by $n+1$ zerores.
+This means that $b^{n+1} - 1$ is represented as $n$ characters representing the value of $b - 1$ (in the case of base ten, this character would be nine).
+Finally, dividing the number by $b-1$ results in $n$ ones, which is equal to the value of the sum as shown initially.
+
+\subsection{Proof by Induction}
+
+The base case, $n=0$, is trivial; both sides evaluate to 1.
+
+\subsubsection{Inductive step: $n\geq1$}
+\begin{align}
+    \frac{b^{n+1} - 1}{b - 1} &= \frac{b^n - 1}{b - 1} + b^n \\
+                              &= \frac{b^n - 1 + (b - 1)b^n}{b - 1} \\
+                              &= \frac{(1 + (b - 1))b^n - 1}{b - 1} \\
+                              &= \frac{(b)b^n - 1}{b - 1} \\
+                              &= \frac{b^{n+1} - 1}{b - 1}
+\end{align}
+
+\end{document}
