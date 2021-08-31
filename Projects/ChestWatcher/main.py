@@ -28,10 +28,11 @@ async def on_champ_select(connection, event):
     os.system("cls" if platform.system() == "Windows" else "clear")
     # </clear_screen
 
+    available_champions = [c for c in available_champions if c in chest_champions]
+    available_champions = [c for c in available_champions if c in owned_champions]
     available_champions.sort(key=lambda c: chest_champions[c], reverse=True)
     for champion_id in available_champions:
-        if champion_id in chest_champions and champion_id in owned_champions:
-            print(f"Chest available on {owned_champions[champion_id]}.")
+        print(f"Chest available on {owned_champions[champion_id]}.")
 
 
 async def get_available_champions(connection) -> list[int]:
