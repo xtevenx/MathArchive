@@ -1,10 +1,11 @@
 import os
+from typing import Optional
 
 import lcu_driver
 import notifypy
 
-searched_groups = None
-# searched_groups: list[str] = ["**Default"]
+searched_groups: Optional[list[str]] = None
+# searched_groups: Optional[list[str]] = ["**Default"]
 
 icon_path: str = "icon.png"
 
@@ -69,6 +70,6 @@ async def friends_update(connection, event):
     last_friends = friends_json
 
 
-last_friends = []
+last_friends = list()
 
 connector.start()
