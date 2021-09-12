@@ -1,4 +1,5 @@
 import os
+import time
 from typing import Optional
 
 import lcu_driver
@@ -26,6 +27,10 @@ async def connect(connection):
     global last_friends
     friends = await connection.request("get", "/lol-chat/v1/friends")
     last_friends = await friends.json()
+
+    global last_me
+    me = await connection.request("get", "/lol-chat/v1/me")
+    last_me = await me.json()
 
 
 @connector.close
@@ -57,6 +62,8 @@ async def friends_update(connection, event):
 
         if searched_groups and f.get("groupName") not in searched_groups:
             continue
+        if time.monotonic() < game_lockout_end and f.get("summonerId") in last_game_participants:
+            continue
 
         last_availability = last_friends[i].get("availability")
         if f.get("availability") == "chat" and last_availability != "chat":
@@ -70,6 +77,38 @@ async def friends_update(connection, event):
     last_friends = friends_json
 
 
+@connector.ws.register("/lol-champ-select/v1/session")
+async def players_update(connection, event):
+    session = await connection.request("get", "/lol-champ-select/v1/session")
+    session_json = await session.json()
+
+    if "myTeam" not in session_json:
+        return
+
+    global last_game_participants
+    last_game_participants = set()
+    for p in session_json["myTeam"] + session_json["theirTeam"]:
+        last_game_participants.add(p.get("summonerId"))
+
+
+@connector.ws.register("/lol-chat/v1/me")
+async def status_update(connection, event):
+    me = await connection.request("get", "/lol-chat/v1/me")
+    me_json = await me.json()
+
+    global last_me, game_lockout_end
+    out_of_game = me_json.get("availability") == "chat" or me_json.get("availability") == "away"
+    if out_of_game and last_me.get("availability") == "dnd":
+        game_lockout_end = time.monotonic() + 60
+    if me_json.get("availability") == "dnd":
+        game_lockout_end = time.monotonic() + 3600
+
+    last_me = me_json
+
+
 last_friends = list()
+last_game_participants = set()
+last_me = dict()
+game_lockout_end = 0.
 
 connector.start()
