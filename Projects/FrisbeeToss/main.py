@@ -1,5 +1,13 @@
 # Discord music player bot. Only works with one server and voice channel.
 
+# Basic design overview:
+#  * Global variables:
+#      * DEQUE - queue for what to play (popleft, pushright) [collections.deque]
+#      * VC - the current voice channel [discord.VoiceClient]
+#  * Bot functions:
+#      * play() - Adds an item to the queue and initializes it.
+#      * skip() - Stops the current item that's playing.
+
 import asyncio
 import collections
 from typing import Optional
@@ -15,6 +23,7 @@ from _env import *
 
 MAX_FILE_SIZE = 32 * 1024 * 1024  # bytes
 BOT_LATENCY = 2.0  # seconds
+REQUEST_DELAY = 2.0  # seconds
 
 # ``logging'' configurations --------------------------------------------------
 
@@ -44,6 +53,7 @@ class Music:
         "audio_quality": 0,
         "outtmpl": "download.m4a",
         "overwrites": True,
+        "sleep_interval_requests": REQUEST_DELAY,
     }
 
     async def initialize(self, ctx, *args):
@@ -55,7 +65,10 @@ class Music:
 
         # Set up the embed message.
         embed = discord.Embed(title=surround_message("Processing request", ":arrows_counterclockwise:"))
+        embed.add_field(name="Request", value=" ".join(args))
+        embed.add_field(name="From", value=ctx.author.name)
         message = await ctx.send(embed=embed)
+        embed.clear_fields()
 
         # Process the arguments.
         url = args[0] if urlparse(args[0]).scheme else "ytsearch1:" + " ".join(args)
@@ -106,7 +119,7 @@ class Music:
         await message.edit(embed=embed)
 
         DEQUE.popleft()
-        if not DEQUE:
+        if len(DEQUE) == 0:
             await VC.disconnect()
             VC = None
 
