@@ -57,6 +57,8 @@ class Music:
     }
 
     async def initialize(self, ctx, *args):
+        global VC
+
         # Sanity check the user sending the message.
         voice = ctx.author.voice
         if voice is None:  # todo: check if user is in the same voice channel.
@@ -69,6 +71,10 @@ class Music:
         embed.add_field(name="From", value=ctx.author.name)
         message = await ctx.send(embed=embed)
         embed.clear_fields()
+
+        # Wait if there's nothing playing and I'm not the first one.
+        while VC is not None and not VC.is_playing() and DEQUE[0] != self:
+            await asyncio.sleep(BOT_LATENCY)
 
         # Process the arguments.
         url = args[0] if urlparse(args[0]).scheme else "ytsearch1:" + " ".join(args)
@@ -105,7 +111,6 @@ class Music:
         embed.title = surround_message("Now playing", ":musical_note:")
         await message.edit(embed=embed)
 
-        global VC
         if VC is None:
             VC = await voice_channel.connect()
         VC.play(discord.FFmpegPCMAudio("download.m4a", options="-maxrate 96k -bufsize 192k"))
