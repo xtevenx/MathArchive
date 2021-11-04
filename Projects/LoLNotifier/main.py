@@ -74,6 +74,8 @@ async def friends_update(connection, event):
                 notification.icon = icon_path
             notification.send(block=False)
 
+            print(notification.message)
+
     last_friends = friends_json
 
 
