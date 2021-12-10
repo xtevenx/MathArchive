@@ -67,6 +67,7 @@ async def get_owned_champions(connection, summoner_id: int) -> dict[int, str]:
 
 
 async def get_summoner_id(connection) -> int:
+    """:returns: summoner ID of the current user."""
     return (await (
         await connection.request("get", "/lol-chat/v1/me")
     ).json())["summonerId"]
