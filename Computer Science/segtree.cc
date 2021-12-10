@@ -45,7 +45,7 @@ class SegTree {
             }
         }
 
-        T* query(size_t first, size_t last) {
+        T query(size_t first, size_t last) {
             first += (this->max_size >> 1);
             last += (this->max_size >> 1);
 
@@ -53,8 +53,7 @@ class SegTree {
             // range of the query. Tnitializing as a zero value instead could
             // theoretically increase the performance by up to a factor of
             // log(n). This is not done because a zero value is not known.
-            T *result = new T;
-            *result = this->data[first++];
+            T result = this->data[first++];
 
             while (first < last) {
                 int sh = 0;
@@ -62,7 +61,7 @@ class SegTree {
                     ++sh;
                 sh -= first + (1 << sh) > last;
 
-                *result = *result + this->data[first >> sh];
+                result = result + this->data[first >> sh];
                 first += 1 << sh;
             }
 
