@@ -5,7 +5,6 @@ template <typename T>
 class SegTree {
     /* Array based segment tree implementation. 
      * T must define the addition (+) and assignment (=) operators.
-     * TODO: implement range queries.
      * */
 
     private:
@@ -26,7 +25,7 @@ class SegTree {
 
         ~SegTree() { delete[] this->data; }
 
-        T& operator [](size_t i) const {
+        T& operator [](const size_t &i) const {
             return this->data[i + (this->max_size >> 1)];
         }
 
@@ -44,5 +43,29 @@ class SegTree {
             for (i = (i + (this->max_size >> 1)) >> 1; i >= 1; i >>= 1) {
                 this->data[i] = this->data[i << 1] + this->data[(i << 1) + 1];
             }
+        }
+
+        T* query(size_t first, size_t last) {
+            first += (this->max_size >> 1);
+            last += (this->max_size >> 1);
+
+            // NOTE: The return value is initialized to the first value in the
+            // range of the query. Tnitializing as a zero value instead could
+            // theoretically increase the performance by up to a factor of
+            // log(n). This is not done because a zero value is not known.
+            T *result = new T;
+            *result = this->data[first++];
+
+            while (first < last) {
+                int sh = 0;
+                while (((first >> sh) & 1) == 0 && first + (1 << sh) <= last)
+                    ++sh;
+                sh -= first + (1 << sh) > last;
+
+                *result = *result + this->data[first >> sh];
+                first += 1 << sh;
+            }
+
+            return result;
         }
 };
