@@ -5,6 +5,8 @@ template <typename T>
 class SegTree {
     /* Array based segment tree implementation. 
      * T must define the addition (+) and assignment (=) operators.
+     * The (+) should "merge" two elements and return a copy of the result.
+     * The (=) should copy the value of another element into itself.
      * */
 
     private:
