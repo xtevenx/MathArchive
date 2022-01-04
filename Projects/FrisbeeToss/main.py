@@ -23,7 +23,7 @@ from _env import *
 
 MAX_FILE_SIZE = 32 * 1024 * 1024  # bytes
 BOT_LATENCY = 2.0  # seconds
-REQUEST_DELAY = 2.0  # seconds
+REQUEST_DELAY = 0.5  # seconds
 
 # ``logging'' configurations --------------------------------------------------
 
