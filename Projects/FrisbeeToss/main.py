@@ -22,8 +22,8 @@ import yt_dlp as youtube_dl
 from _env import *
 
 MAX_FILE_SIZE = 32 * 1024 * 1024  # bytes
-BOT_LATENCY = 2.0  # seconds
-REQUEST_DELAY = 0.5  # seconds
+BOT_LATENCY = .6  # seconds
+REQUEST_DELAY = 0.  # seconds
 
 # ``logging'' configurations --------------------------------------------------
 
@@ -124,7 +124,7 @@ class Music:
         await message.edit(embed=embed)
 
         DEQUE.popleft()
-        if len(DEQUE) == 0:
+        if not DEQUE:
             await VC.disconnect()
             VC = None
 
