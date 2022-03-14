@@ -20,6 +20,12 @@ status_message: dict[str, str] = {
 connector = lcu_driver.Connector()
 
 
+# Hack the library to burn less CPU when League is not running.
+from time import sleep
+_foo = lcu_driver.utils.return_process
+lcu_driver.utils.return_process = lambda *a, **k: [sleep(5), _foo(*a, **k)][1]
+
+
 @connector.ready
 async def connect(connection):
     print("Connected to LCU API.")
