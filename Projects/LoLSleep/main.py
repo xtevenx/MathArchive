@@ -11,7 +11,7 @@ connector = lcu_driver.Connector()
 # Hack the library to burn less CPU when League is not running.
 from time import sleep
 _foo = lcu_driver.utils.return_process
-lcu_driver.utils.return_process = lambda *a, **k: [sleep(5), _foo(*a, **k)][1]
+lcu_driver.utils.return_process = lambda *a, **k: [sleep(60), _foo(*a, **k)][1]
 
 
 @connector.ws.register("/lol-chat/v1/me")
