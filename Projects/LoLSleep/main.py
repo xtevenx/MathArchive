@@ -2,8 +2,8 @@ import datetime
 import lcu_driver.utils
 import psutil
 
-START_TIME = {"hour": 5, "minute": 0, "second": 0}
-END_TIME = {"hour": 22, "minute": 30, "second": 0}
+START_TIME = {"hour": 17, "minute": 0, "second": 0}
+END_TIME = {"hour": 23, "minute": 0, "second": 0}
 
 connector = lcu_driver.Connector()
 
