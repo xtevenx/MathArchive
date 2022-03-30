@@ -1,16 +1,27 @@
-import lcu_driver
+from lcu_driver import Connector
+from PIL import Image
+from pystray import Icon
+from threading import Thread
 
-connector = lcu_driver.Connector()
+connector = Connector()
 
 
 @connector.ready
 async def connect(connection):
     print("Connected to LCU API.")
 
+    global icon, icon_thread
+    icon = Icon(name="cw2", icon=Image.open('chest_icon.webp'))
+    icon_thread = Thread(target=lambda: icon.run())
+    icon_thread.start()
+
 
 @connector.close
 async def disconnect(connection):
     print("Disconnected.")
+
+    icon.stop()
+    icon_thread.join()
 
 
 @connector.ws.register("/lol-champ-select/v1/session")
@@ -23,16 +34,10 @@ async def on_champ_select(connection, event):
     chest_champions = await get_chest_champions(connection, summoner_id)
     owned_champions = await get_owned_champions(connection, summoner_id)
 
-    # <clear_screen>
-    import platform, os
-    os.system("cls" if platform.system() == "Windows" else "clear")
-    # </clear_screen
-
     available_champions = [c for c in available_champions if c in chest_champions]
     available_champions = [c for c in available_champions if c in owned_champions]
     available_champions.sort(key=lambda c: chest_champions[c], reverse=True)
-    for champion_id in available_champions:
-        print(f"Chest available on {owned_champions[champion_id]}.")
+    icon.title = "\n".join(owned_champions[cid] for cid in available_champions)
 
 
 async def get_available_champions(connection) -> list[int]:
@@ -67,10 +72,18 @@ async def get_owned_champions(connection, summoner_id: int) -> dict[int, str]:
 
 
 async def get_summoner_id(connection) -> int:
-    """:returns: summoner ID of the current user."""
     return (await (
         await connection.request("get", "/lol-chat/v1/me")
     ).json())["summonerId"]
 
 
-connector.start()
+if __name__ == "__main__":
+    import time
+    import lcu_driver.utils
+
+    # Hack the library to burn less CPU when League is not running.
+    # This makes the script check for League once every 60 seconds instead of constantly.
+    _foo = lcu_driver.utils.return_process
+    lcu_driver.utils.return_process = lambda *a, **k: [time.sleep(60), _foo(*a, **k)][1]
+
+    connector.start()
