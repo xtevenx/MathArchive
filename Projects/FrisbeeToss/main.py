@@ -92,7 +92,7 @@ class Music:
             embed.set_footer(text="Retrieved from: " + info["webpage_url"])
             await message.edit(embed=embed)
 
-            if info["filesize"] > MAX_FILE_SIZE:
+            if "filesize" in info and info["filesize"] > MAX_FILE_SIZE:
                 embed.title = surround_message("Sorry; item too large.", ":no_entry_sign:")
                 return await message.edit(embed=embed)
 
