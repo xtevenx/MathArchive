@@ -19,9 +19,9 @@ def clip(obj: Any) -> str:
 
 def get_input(script_name: str) -> str:
     """Takes __file__ from script, returns the input."""
-    input_file = script_name[:script_name.rfind('.')] + ".txt"
+    input_file = script_name[:script_name.rfind(".")] + ".txt"
     try:
-        with open(input_file, "r", encoding="utf-8") as file_ptr:
+        with open(input_file, encoding="utf-8") as file_ptr:
             input_string = file_ptr.read()
     except OSError:
         input_string = pyperclip.paste().rstrip("\n")
