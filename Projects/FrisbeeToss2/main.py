@@ -12,17 +12,17 @@ import discord
 import discord.ext.tasks
 from yt_dlp import YoutubeDL
 
-PLAY_FILE: str = "processed.mka"
-TEMP_FILE: str = "download"
+PLAY_FILE: str = 'processed.mka'
+TEMP_FILE: str = 'download'
 
 YDL_OPTIONS = {
-    "default_search": "auto",
-    "format": "bestaudio",
-    "format_sort": "quality,codec,ext,br".split(","),
-    "outtmpl": TEMP_FILE,
-    "overwrites": True,
+    'default_search': 'auto',
+    'format': 'bestaudio',
+    'format_sort': 'quality,codec,ext,br'.split(','),
+    'outtmpl': TEMP_FILE,
+    'overwrites': True,
     # Maximum filesize to download (bytes).
-    "max_filesize": 32 * (1024 * 1024),
+    'max_filesize': 32 * (1024 * 1024),
 }
 
 # How often to check for commands or audio end (seconds).
@@ -61,13 +61,12 @@ class MyClient(discord.Client):
                 continue
 
             connection = await channel.connect()
-            connection.play(discord.FFmpegOpusAudio(PLAY_FILE, codec="copy"))
+            connection.play(discord.FFmpegOpusAudio(PLAY_FILE, codec='copy'))
 
             while connection.is_playing():
                 try:
-                    if (skip_channel := get_channel(skip_queue.get_nowait())) is None:
-                        continue
-                    if skip_channel.id == channel.id:
+                    skip_channel = get_channel(skip_queue.get_nowait())
+                    if skip_channel is not None and skip_channel.id == channel.id:
                         break
                 except asyncio.QueueEmpty:
                     await asyncio.sleep(LOOP_LATENCY)
@@ -85,25 +84,23 @@ client = MyClient(intents=intents)
 tree = discord.app_commands.CommandTree(client)
 
 
-@tree.command(name="play", description="Queue a piece of audio to be played.")
+@tree.command(name='play', description='Queue a piece of audio to be played.')
 async def command_play(interaction: discord.Interaction, query: str):
-    if interaction.user.id not in get_play_users().union(get_skip_users()):
-        print("Blocked play command from user:", interaction.user.id)
-        return
-    await music_queue.put((interaction, query))
+    print('Received play command from user:', interaction.user.id)
+    if interaction.user.id in get_play_users().union(get_skip_users()):
+        await music_queue.put((interaction, query))
 
 
-@tree.command(name="skip", description="Skip this current piece.")
+@tree.command(name='skip', description='Skip this current piece.')
 async def command_skip(interaction: discord.Interaction):
-    if interaction.user.id not in get_skip_users():
-        print("Blocked skip command from user:", interaction.user.id)
-        return
-    await skip_queue.put(interaction)
+    print('Received skip command from user:', interaction.user.id)
+    if interaction.user.id in get_skip_users():
+        await skip_queue.put(interaction)
 
 
 async def normalize_audio():
     await (await asyncio.create_subprocess_shell(
-        f"ffmpeg -y -i {TEMP_FILE} -c:a libopus -b:a 96k -filter:a loudnorm {PLAY_FILE}"
+        f'ffmpeg -y -i {TEMP_FILE} -c:a libopus -b:a 96k -filter:a loudnorm {PLAY_FILE}'
     )).wait()
 
 
@@ -118,16 +115,16 @@ def get_channel(interaction) -> discord.VoiceChannel | None:
 
 
 def get_play_users() -> set[int]:
-    with open("PLAY_USERS") as fp:
+    with open('PLAY_USERS') as fp:
         return {int(s.strip()) for s in fp.readlines()}
 
 
 def get_skip_users() -> set[int]:
-    with open("SKIP_USERS") as fp:
+    with open('SKIP_USERS') as fp:
         return {int(s.strip()) for s in fp.readlines()}
 
 
-if __name__ == "__main__":
-    with open("./DISCORD_TOKEN") as fp:
+if __name__ == '__main__':
+    with open('./DISCORD_TOKEN') as fp:
         DISCORD_TOKEN = fp.read().strip()
     client.run(DISCORD_TOKEN)
