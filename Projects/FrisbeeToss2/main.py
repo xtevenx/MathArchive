@@ -1,20 +1,18 @@
-"""FrisbeeToss2
-
-Second incarnation of a single purpose very clunky discord bot.
-Much better than the first version but still horribly designed.
-"""
-
 import asyncio
+import json
 import os
 import time
+from asyncio import Queue
 
 import discord
 import discord.ext.tasks
+from discord import Client, Intents, Interaction, Member, VoiceChannel
 from yt_dlp import YoutubeDL
 
 PLAY_FILE: str = 'processed.mka'
 TEMP_FILE: str = 'download'
 
+# Options for yt_dlp.
 YDL_OPTIONS = {
     'default_search': 'auto',
     'format': 'bestaudio',
@@ -29,87 +27,96 @@ YDL_OPTIONS = {
 LOOP_LATENCY: float = 0.618
 
 
-class MyClient(discord.Client):
+class SmurfAbortion(Client):
 
     async def on_ready(self):
         await tree.sync()
 
-        if not self.manage_queue.is_running():
-            self.manage_queue.start()
+        try:
+            self.play_music.start()
+        except RuntimeError:
+            ...
 
-    @discord.ext.tasks.loop(seconds=0, count=1)
-    async def manage_queue(self):
-        while True:
-            interaction, query = await music_queue.get()
+    @discord.ext.tasks.loop(seconds=LOOP_LATENCY)
+    async def play_music(self):
+        interaction, info_dict = await music_queue.get()
+        await clear_queue(skip_queue)
 
-            # TODO: Move these checks to the command function and respond to the user.
-            # TODO: Add always updating queue at bottom of channel.
-            if (channel := get_channel(interaction)) is None:
-                continue
+        # TODO: Add always updating queue at bottom of channel.
+        if (channel := get_channel(interaction)) is None:
+            return
 
-            # Get time before download. If file is not changed after this, then
-            # download or normalize failed and don't play the file.
-            download_time = time.time()
+        # Get time before download. If file is not changed after this, then
+        # download or normalize failed and don't play the file.
+        download_time = time.time()
 
-            with YoutubeDL(YDL_OPTIONS) as ydl:
-                ydl.download([query])
-            await normalize_audio()
+        # TODO: Move this to the command function and download beforehand.
+        with YoutubeDL(YDL_OPTIONS) as ydl:
+            ydl.download([info_dict['entries'][0]['webpage_url']])
+        await normalize_audio()
 
-            if not os.path.exists(PLAY_FILE):
-                continue
-            if os.path.getmtime(PLAY_FILE) < download_time:
-                continue
+        if not os.path.exists(PLAY_FILE):
+            return
+        if os.path.getmtime(PLAY_FILE) < download_time:
+            return
 
-            connection = await channel.connect()
-            connection.play(discord.FFmpegOpusAudio(PLAY_FILE, codec='copy'))
+        connection = await channel.connect()
+        connection.play(discord.FFmpegOpusAudio(PLAY_FILE, codec='copy'))
 
-            while connection.is_playing():
-                try:
-                    skip_channel = get_channel(skip_queue.get_nowait())
-                    if skip_channel is not None and skip_channel.id == channel.id:
-                        break
-                except asyncio.QueueEmpty:
-                    await asyncio.sleep(LOOP_LATENCY)
+        try:
+            await asyncio.wait_for(skip_queue.get(), info_dict['entries'][0]['duration'])
+        except TimeoutError:
+            ...
 
-            await connection.disconnect()
+        await connection.disconnect()
 
 
-skip_queue: asyncio.Queue[discord.Interaction] = asyncio.Queue()
-music_queue: asyncio.Queue[tuple[discord.Interaction, str]] = asyncio.Queue()
+music_queue: Queue[tuple[Interaction, dict]] = Queue()
+skip_queue: Queue[Interaction] = Queue()
 
-intents = discord.Intents.default()
+intents = Intents.default()
 intents.message_content = True
 
-client = MyClient(intents=intents)
+client = SmurfAbortion(intents=intents)
 tree = discord.app_commands.CommandTree(client)
 
 
 @tree.command(name='play', description='Queue a piece of audio to be played.')
-async def command_play(interaction: discord.Interaction, query: str):
+async def command_play(interaction: Interaction, query: str):
     print('Received play command from user:', interaction.user.id)
     if interaction.user.id in get_play_users().union(get_skip_users()):
-        await music_queue.put((interaction, query))
+        with YoutubeDL(YDL_OPTIONS) as ydl:
+            info = ydl.sanitize_info(ydl.extract_info(query, download=False))
+        info_dict = json.loads(json.dumps(info))
+        # TODO: React to the user.
+        await music_queue.put((interaction, info_dict))
 
 
-@tree.command(name='skip', description='Skip this current piece.')
-async def command_skip(interaction: discord.Interaction):
+@tree.command(name='skip', description='Skip this current piece of audio.')
+async def command_skip(interaction: Interaction):
     print('Received skip command from user:', interaction.user.id)
     if interaction.user.id in get_skip_users():
+        # TODO: React to the user.
         await skip_queue.put(interaction)
 
 
-async def normalize_audio():
+async def clear_queue(q: Queue) -> None:
+    while not q.empty():
+        await q.get()
+        q.task_done()
+
+
+async def normalize_audio() -> None:
     await (await asyncio.create_subprocess_shell(
-        f'ffmpeg -y -i {TEMP_FILE} -c:a libopus -b:a 96k -filter:a loudnorm {PLAY_FILE}'
-    )).wait()
+        f'ffmpeg -y -i {TEMP_FILE} -c:a libopus -b:a 96k -filter:a loudnorm {PLAY_FILE}')).wait()
 
 
-def get_channel(interaction) -> discord.VoiceChannel | None:
-    if not isinstance(user := interaction.user, discord.Member):
+def get_channel(interaction: Interaction) -> VoiceChannel | None:
+    if not isinstance(user := interaction.user, Member):
         return None
     if (voice := user.voice) is None:
         return None
-    if not isinstance(channel := voice.channel, discord.VoiceChannel):
+    if not isinstance(channel := voice.channel, VoiceChannel):
         return None
     return channel
 
