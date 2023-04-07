@@ -40,9 +40,8 @@ class SmurfAbortion(Client):
     @discord.ext.tasks.loop(seconds=LOOP_LATENCY)
     async def play_music(self):
         interaction, info_dict = await music_queue.get()
-        await clear_queue(skip_queue)
 
-        # TODO: Add always updating queue at bottom of channel.
+        # Don't do anything if the user is not in a channel.
         if (channel := get_channel(interaction)) is None:
             return
 
@@ -52,7 +51,7 @@ class SmurfAbortion(Client):
 
         # TODO: Move this to the command function and download beforehand.
         with YoutubeDL(YDL_OPTIONS) as ydl:
-            ydl.download([info_dict['entries'][0]['webpage_url']])
+            ydl.download([info_dict['webpage_url']])
         await normalize_audio()
 
         if not os.path.exists(PLAY_FILE):
@@ -64,7 +63,7 @@ class SmurfAbortion(Client):
         connection.play(discord.FFmpegOpusAudio(PLAY_FILE, codec='copy'))
 
         try:
-            await asyncio.wait_for(skip_queue.get(), info_dict['entries'][0]['duration'])
+            await asyncio.wait_for(skip_queue.get(), info_dict['duration'])
             skip_queue.task_done()
         except asyncio.TimeoutError:
             ...
@@ -79,6 +78,7 @@ skip_queue: Queue[Interaction] = Queue()
 intents = Intents.default()
 intents.message_content = True
 
+# TODO: Add always updating queue at bottom of channel.
 client = SmurfAbortion(intents=intents)
 tree = discord.app_commands.CommandTree(client)
 
@@ -90,6 +90,8 @@ async def command_play(interaction: Interaction, query: str):
         with YoutubeDL(YDL_OPTIONS) as ydl:
             info = ydl.sanitize_info(ydl.extract_info(query, download=False))
         info_dict = json.loads(json.dumps(info))
+        if 'entries' in info_dict:
+            info_dict = info_dict['entries'][0]
         # TODO: React to the user.
         await music_queue.put((interaction, info_dict))
 
@@ -100,12 +102,6 @@ async def command_skip(interaction: Interaction):
     if interaction.user.id in get_skip_users():
         # TODO: React to the user.
         await skip_queue.put(interaction)
-
-
-async def clear_queue(q: Queue) -> None:
-    while not q.empty():
-        await q.get()
-        q.task_done()
 
 
 async def normalize_audio() -> None:
