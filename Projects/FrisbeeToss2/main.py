@@ -65,10 +65,12 @@ class SmurfAbortion(Client):
 
         try:
             await asyncio.wait_for(skip_queue.get(), info_dict['entries'][0]['duration'])
-        except TimeoutError:
+            skip_queue.task_done()
+        except asyncio.TimeoutError:
             ...
 
         await connection.disconnect()
+        music_queue.task_done()
 
 
 music_queue: Queue[tuple[Interaction, dict]] = Queue()
