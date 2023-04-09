@@ -86,22 +86,49 @@ tree = discord.app_commands.CommandTree(client)
 @tree.command(name='play', description='Queue a piece of audio to be played.')
 async def command_play(interaction: Interaction, query: str):
     print('Received play command from user:', interaction.user.id)
+
     if interaction.user.id in get_play_users().union(get_skip_users()):
+        await interaction.response.send_message('Querying...', ephemeral=True, silent=True)
+
         with YoutubeDL(YDL_OPTIONS) as ydl:
             info = ydl.sanitize_info(ydl.extract_info(query, download=False))
         info_dict = json.loads(json.dumps(info))
         if 'entries' in info_dict:
             info_dict = info_dict['entries'][0]
-        # TODO: React to the user.
+
+        # The 'duration' values are in seconds.
+        if info_dict['duration'] > 900 and interaction.user.id not in get_skip_users():
+            await interaction.edit_original_response(content='Stop griefing me (too long).')
+            return
+        if info_dict['duration'] > 18000:
+            await interaction.edit_original_response(content='Stop griefing me (too long).')
+            return
+
+        await interaction.edit_original_response(
+            content="Added '{}' with duration {:02d}:{:02d}.".format(
+                info_dict['title'], info_dict['duration'] // 60, info_dict['duration'] % 60))
         await music_queue.put((interaction, info_dict))
+
+    else:
+        await interaction.response.send_message("I'm not listening, lil' bro.",
+                                                ephemeral=True,
+                                                silent=True)
 
 
 @tree.command(name='skip', description='Skip this current piece of audio.')
 async def command_skip(interaction: Interaction):
     print('Received skip command from user:', interaction.user.id)
+
     if interaction.user.id in get_skip_users():
-        # TODO: React to the user.
+        await interaction.response.send_message('Attempting to skip this piece of audio.',
+                                                ephemeral=True,
+                                                silent=True)
         await skip_queue.put(interaction)
+
+    else:
+        await interaction.response.send_message("I'm not listening, lil' bro.",
+                                                ephemeral=True,
+                                                silent=True)
 
 
 async def normalize_audio() -> None:
