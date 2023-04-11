@@ -3,28 +3,24 @@ import json
 import os
 import time
 from asyncio import Queue
+from concurrent.futures import ThreadPoolExecutor
 
 import discord
 import discord.ext.tasks
 from discord import Client, Intents, Interaction, Member, VoiceChannel
 from yt_dlp import YoutubeDL
 
-PLAY_FILE: str = 'processed.mka'
-TEMP_FILE: str = 'download'
+PLAY_FILE: str = '/tmp/FrisbeeToss2-processed.mka'
+TEMP_FILE: str = '/tmp/FrisbeeToss2-temporary'
 
 # Options for yt_dlp.
 YDL_OPTIONS = {
     'default_search': 'auto',
     'format': 'bestaudio',
-    'format_sort': 'quality,codec,ext,br'.split(','),
+    'format_sort': ['quality', 'codec', 'br'],
     'outtmpl': TEMP_FILE,
     'overwrites': True,
-    # Maximum filesize to download (bytes).
-    'max_filesize': 32 * (1024 * 1024),
 }
-
-# How often to check for commands or audio end (seconds).
-LOOP_LATENCY: float = 0.618
 
 
 class SmurfAbortion(Client):
@@ -37,33 +33,23 @@ class SmurfAbortion(Client):
         except RuntimeError:
             ...
 
-    @discord.ext.tasks.loop(seconds=LOOP_LATENCY)
+    @discord.ext.tasks.loop(seconds=0)
     async def play_music(self):
-        interaction, info_dict = await music_queue.get()
+        interaction, info = await music_queue.get()
 
         # Don't do anything if the user is not in a channel.
         if (channel := get_channel(interaction)) is None:
             return
 
-        # Get time before download. If file is not changed after this, then
-        # download or normalize failed and don't play the file.
-        download_time = time.time()
-
         # TODO: Move this to the command function and download beforehand.
-        with YoutubeDL(YDL_OPTIONS) as ydl:
-            ydl.download([info_dict['webpage_url']])
-        await normalize_audio()
-
-        if not os.path.exists(PLAY_FILE):
-            return
-        if os.path.getmtime(PLAY_FILE) < download_time:
+        if not await ydl_download(info['webpage_url']):
             return
 
         connection = await channel.connect()
         connection.play(discord.FFmpegOpusAudio(PLAY_FILE, codec='copy'))
 
         try:
-            await asyncio.wait_for(skip_queue.get(), info_dict['duration'])
+            await asyncio.wait_for(skip_queue.get(), info['duration'])
             skip_queue.task_done()
         except asyncio.TimeoutError:
             ...
@@ -90,24 +76,20 @@ async def command_play(interaction: Interaction, query: str):
     if interaction.user.id in get_play_users().union(get_skip_users()):
         await interaction.response.send_message('Querying...', ephemeral=True, silent=True)
 
-        with YoutubeDL(YDL_OPTIONS) as ydl:
-            info = ydl.sanitize_info(ydl.extract_info(query, download=False))
-        info_dict = json.loads(json.dumps(info))
-        if 'entries' in info_dict:
-            info_dict = info_dict['entries'][0]
+        info = await ydl_extract_info(query)
 
         # The 'duration' values are in seconds.
-        if info_dict['duration'] > 900 and interaction.user.id not in get_skip_users():
+        if info['duration'] > 900 and interaction.user.id not in get_skip_users():
             await interaction.edit_original_response(content='Stop griefing me (too long).')
             return
-        if info_dict['duration'] > 18000:
+        if info['duration'] > 18000:
             await interaction.edit_original_response(content='Stop griefing me (too long).')
             return
 
         await interaction.edit_original_response(
-            content="Added '{}' with duration {:02d}:{:02d}.".format(
-                info_dict['title'], info_dict['duration'] // 60, info_dict['duration'] % 60))
-        await music_queue.put((interaction, info_dict))
+            content='Added `{}` with duration `{:02d}:{:02d}`.'.format(
+                info['title'], *divmod(round(info['duration']), 60)))
+        await music_queue.put((interaction, info))
 
     else:
         await interaction.response.send_message("I'm not listening, lil' bro.",
@@ -131,11 +113,6 @@ async def command_skip(interaction: Interaction):
                                                 silent=True)
 
 
-async def normalize_audio() -> None:
-    await (await asyncio.create_subprocess_shell(
-        f'ffmpeg -y -i {TEMP_FILE} -c:a libopus -b:a 96k -filter:a loudnorm {PLAY_FILE}')).wait()
-
-
 def get_channel(interaction: Interaction) -> VoiceChannel | None:
     if not isinstance(user := interaction.user, Member):
         return None
@@ -144,6 +121,33 @@ def get_channel(interaction: Interaction) -> VoiceChannel | None:
     if not isinstance(channel := voice.channel, VoiceChannel):
         return None
     return channel
+
+
+async def ydl_extract_info(query: str) -> dict:
+    loop = asyncio.get_running_loop()
+
+    with ThreadPoolExecutor() as pool, YoutubeDL(YDL_OPTIONS) as ydl:
+        info = await loop.run_in_executor(pool, lambda: ydl.extract_info(query, download=False))
+        info = json.loads(json.dumps(ydl.sanitize_info(info)))
+
+    if 'entries' in info:
+        info = info['entries'][0]
+    return info
+
+
+async def ydl_download(url: str) -> bool:
+    loop = asyncio.get_running_loop()
+
+    # If file not changed later, then download or normalize failed, so return the failure.
+    download_time = time.time()
+
+    with ThreadPoolExecutor() as pool, YoutubeDL(YDL_OPTIONS) as ydl:
+        await loop.run_in_executor(pool, ydl.download, [url])
+    await (await asyncio.create_subprocess_shell(
+        f'ffmpeg-normalize -o {PLAY_FILE} -f --keep-loudness-range-target -c:a libopus {TEMP_FILE}'
+    )).wait()
+
+    return os.path.exists(PLAY_FILE) and os.path.getmtime(PLAY_FILE) > download_time
 
 
 def get_play_users() -> set[int]:
