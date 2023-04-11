@@ -3,11 +3,11 @@ import json
 import os
 import time
 from asyncio import Queue
-from concurrent.futures import ThreadPoolExecutor
 
 import discord
 import discord.ext.tasks
 from discord import Client, Intents, Interaction, Member, VoiceChannel
+from ffmpeg_normalize import FFmpegNormalize
 from yt_dlp import YoutubeDL
 
 PLAY_FILE: str = '/tmp/FrisbeeToss2-processed.mka'
@@ -20,6 +20,7 @@ YDL_OPTIONS = {
     'format_sort': ['quality', 'codec', 'br'],
     'outtmpl': TEMP_FILE,
     'overwrites': True,
+    'quiet': True,
 }
 
 
@@ -46,7 +47,7 @@ class SmurfAbortion(Client):
             return
 
         connection = await channel.connect()
-        connection.play(discord.FFmpegOpusAudio(PLAY_FILE, codec='copy'))
+        connection.play(discord.FFmpegPCMAudio(PLAY_FILE))
 
         try:
             await asyncio.wait_for(skip_queue.get(), info['duration'])
@@ -126,8 +127,8 @@ def get_channel(interaction: Interaction) -> VoiceChannel | None:
 async def ydl_extract_info(query: str) -> dict:
     loop = asyncio.get_running_loop()
 
-    with ThreadPoolExecutor() as pool, YoutubeDL(YDL_OPTIONS) as ydl:
-        info = await loop.run_in_executor(pool, lambda: ydl.extract_info(query, download=False))
+    with YoutubeDL(YDL_OPTIONS) as ydl:
+        info = await loop.run_in_executor(None, lambda: ydl.extract_info(query, download=False))
         info = json.loads(json.dumps(ydl.sanitize_info(info)))
 
     if 'entries' in info:
@@ -141,11 +142,12 @@ async def ydl_download(url: str) -> bool:
     # If file not changed later, then download or normalize failed, so return the failure.
     download_time = time.time()
 
-    with ThreadPoolExecutor() as pool, YoutubeDL(YDL_OPTIONS) as ydl:
-        await loop.run_in_executor(pool, ydl.download, [url])
-    await (await asyncio.create_subprocess_shell(
-        f'ffmpeg-normalize -o {PLAY_FILE} -f --keep-loudness-range-target -c:a libopus {TEMP_FILE}'
-    )).wait()
+    with YoutubeDL(YDL_OPTIONS) as ydl:
+        await loop.run_in_executor(None, ydl.download, [url])
+
+    normalizer = FFmpegNormalize(keep_loudness_range_target=True)
+    normalizer.add_media_file(TEMP_FILE, PLAY_FILE)
+    await loop.run_in_executor(None, normalizer.run_normalization)
 
     return os.path.exists(PLAY_FILE) and os.path.getmtime(PLAY_FILE) > download_time
 
