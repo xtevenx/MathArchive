@@ -1,6 +1,6 @@
 """
-User IDs for playing music are in the file PLAY_USERS
-User IDs for skipping music are in the file SKIP_USERS (these can also play music)
+This only works for one voice channel
+Downloaded file locations are in the variables PLAY_FILE and TEMP_FILE
 Channel name for the queue is defined in the variable QUEUE_NAME
 """
 
@@ -12,7 +12,15 @@ from asyncio import Queue
 
 import discord
 import discord.ext.tasks
-from discord import Client, Embed, Intents, Interaction, Member, Message, TextChannel, VoiceChannel
+from discord import (
+    Client,
+    Intents,
+    Interaction,
+    Member,
+    Message,
+    TextChannel,
+    VoiceChannel,
+)
 from ffmpeg_normalize import FFmpegNormalize
 from yt_dlp import YoutubeDL
 
@@ -34,6 +42,15 @@ QUEUE_NAME: str = 'music'
 QUEUE_CHANNEL: TextChannel | None = None
 QUEUE_MESSAGE: Message | None = None
 QUEUE_UPDATE: Queue[None] = Queue()
+
+
+class MusicApplet(discord.ui.View):
+
+    @discord.ui.button(label='Skip')
+    async def skip_callback(self, interaction: discord.interactions.Interaction,
+                            _: discord.ui.Button):
+        await interaction.response.send_message('Skipping...', ephemeral=True, silent=True)
+        await skip_queue.put(0)
 
 
 class SmurfAbortion(Client):
@@ -58,6 +75,8 @@ class SmurfAbortion(Client):
         except RuntimeError:
             ...
 
+        await QUEUE_UPDATE.put(None)
+
     @discord.ext.tasks.loop(seconds=0)
     async def play_music(self):
         interaction, info = await queue_get()
@@ -73,7 +92,16 @@ class SmurfAbortion(Client):
         connection = await channel.connect()
         connection.play(discord.FFmpegPCMAudio(PLAY_FILE))
 
+        await QUEUE_UPDATE.put(None)
+
         try:
+            while True:
+                skip_queue.get_nowait()
+        except asyncio.QueueEmpty:
+            ...
+
+        try:
+            # TODO: Make this manage skip types.
             await asyncio.wait_for(skip_queue.get(), info['duration'])
             skip_queue.task_done()
         except asyncio.TimeoutError:
@@ -82,6 +110,8 @@ class SmurfAbortion(Client):
         await connection.disconnect()
         music_queue.task_done()
 
+        await QUEUE_UPDATE.put(None)
+
     @discord.ext.tasks.loop(seconds=0)
     async def update_queue(self):
         global QUEUE_MESSAGE
@@ -89,31 +119,31 @@ class SmurfAbortion(Client):
 
         await QUEUE_UPDATE.get()
 
-        # Time to update the message!
+        # Delete the old message if necessary.
 
-        embeds: list[Embed] = [make_embed(info) for _, info in music_list[:5]]
+        if QUEUE_MESSAGE is not None:
+            is_latest = False
+            async for message in QUEUE_CHANNEL.history(limit=1):
+                is_latest = message.id == QUEUE_MESSAGE.id
 
-        if not embeds:
-            if QUEUE_MESSAGE is not None:
-                await QUEUE_MESSAGE.delete()
-                QUEUE_MESSAGE = None
-            return
+            if not is_latest:
+                try:
+                    await QUEUE_MESSAGE.delete()
+                finally:
+                    QUEUE_MESSAGE = None
 
-        # After this point, I want to send the message.
+        # Time to make a new message!
+
+        queue_text = '**Queue**\n' + '\n'.join('{}. `{}` with duration `{}`'.format(
+            i + 1, info['title'], format_duration(info['duration']))
+                                               for i, (_, info) in enumerate(music_list[:5]))
 
         if QUEUE_MESSAGE is None:
-            QUEUE_MESSAGE = await QUEUE_CHANNEL.send(embeds=embeds, silent=True)
-            return
-
-        is_latest = False
-        async for message in QUEUE_CHANNEL.history(limit=1):
-            is_latest = message.id == QUEUE_MESSAGE.id
-
-        if is_latest:
-            await QUEUE_MESSAGE.edit(embeds=embeds)
+            QUEUE_MESSAGE = await QUEUE_CHANNEL.send(content=queue_text,
+                                                     view=MusicApplet(),
+                                                     silent=True)
         else:
-            await QUEUE_MESSAGE.delete()
-            QUEUE_MESSAGE = await QUEUE_CHANNEL.send(embeds=embeds, silent=True)
+            await QUEUE_MESSAGE.edit(content=queue_text)
 
 
 # music_queue and music_list are coupled, hence should always have the same number of elements.
@@ -124,7 +154,10 @@ class SmurfAbortion(Client):
 music_queue: Queue[None] = Queue()
 music_list: list[tuple[Interaction, dict]] = []
 
-skip_queue: Queue[Interaction] = Queue()
+# carries the number of seconds to skip forwards/backwards.
+# if None, then skip the entire thing.
+# if 0, then toggle play or pause.
+skip_queue: Queue[float | None] = Queue()
 
 intents = Intents.default()
 intents.message_content = True
@@ -135,46 +168,26 @@ tree = discord.app_commands.CommandTree(client)
 
 @tree.command(name='play', description='Queue a piece of audio to be played.')
 async def command_play(interaction: Interaction, query: str):
-    print('Received play command from user:', interaction.user.id)
+    await interaction.response.send_message('Querying...', ephemeral=True, silent=True)
 
-    if interaction.user.id in get_play_users().union(get_skip_users()):
-        await interaction.response.send_message('Querying...', ephemeral=True, silent=True)
+    info = await ydl_extract_info(query)
 
-        info = await ydl_extract_info(query)
+    # The 'duration' value is in seconds.
+    if info['duration'] > 18000:
+        # Give no error message. :)
+        return
 
-        # The 'duration' values are in seconds.
-        if info['duration'] > 900 and interaction.user.id not in get_skip_users():
-            await interaction.edit_original_response(content='Stop griefing me (too long).')
-            return
-        if info['duration'] > 18000:
-            await interaction.edit_original_response(content='Stop griefing me (too long).')
-            return
-
+    try:
         await interaction.edit_original_response(content='Added `{}` with duration `{}`.'.format(
             info['title'], format_duration(info['duration'])))
-
+    finally:
         await queue_put((interaction, info))
-
-    else:
-        await interaction.response.send_message("I'm not listening, lil' bro.",
-                                                ephemeral=True,
-                                                silent=True)
 
 
 @tree.command(name='skip', description='Skip this current piece of audio.')
 async def command_skip(interaction: Interaction):
-    print('Received skip command from user:', interaction.user.id)
-
-    if interaction.user.id in get_skip_users():
-        await interaction.response.send_message('Attempting to skip this piece of audio.',
-                                                ephemeral=True,
-                                                silent=True)
-        await skip_queue.put(interaction)
-
-    else:
-        await interaction.response.send_message("I'm not listening, lil' bro.",
-                                                ephemeral=True,
-                                                silent=True)
+    await interaction.response.send_message('Skipping...', ephemeral=True, silent=True)
+    await skip_queue.put(0)
 
 
 async def queue_get():
@@ -234,24 +247,6 @@ def get_channel(interaction: Interaction) -> VoiceChannel | None:
     if not isinstance(channel := voice.channel, VoiceChannel):
         return None
     return channel
-
-
-def get_play_users() -> set[int]:
-    with open('PLAY_USERS') as fp:
-        return {int(s.strip()) for s in fp.readlines()}
-
-
-def get_skip_users() -> set[int]:
-    with open('SKIP_USERS') as fp:
-        return {int(s.strip()) for s in fp.readlines()}
-
-
-def make_embed(info: dict) -> Embed:
-    embed = Embed(title=info['title'])
-    embed.add_field(name='URL', value=info['webpage_url'])
-    embed.add_field(name='Duration', value=format_duration(info['duration']))
-    embed.set_thumbnail(url=info['thumbnail'])
-    return embed
 
 
 if __name__ == '__main__':
