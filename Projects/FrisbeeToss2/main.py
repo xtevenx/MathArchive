@@ -1,3 +1,9 @@
+"""
+User IDs for playing music are in the file PLAY_USERS
+User IDs for skipping music are in the file SKIP_USERS (these can also play music)
+Channel name for the queue is defined in the variable QUEUE_NAME
+"""
+
 import asyncio
 import json
 import os
@@ -6,7 +12,7 @@ from asyncio import Queue
 
 import discord
 import discord.ext.tasks
-from discord import Client, Intents, Interaction, Member, VoiceChannel
+from discord import Client, Embed, Intents, Interaction, Member, Message, TextChannel, VoiceChannel
 from ffmpeg_normalize import FFmpegNormalize
 from yt_dlp import YoutubeDL
 
@@ -23,10 +29,23 @@ YDL_OPTIONS = {
     'quiet': True,
 }
 
+# Sticky queue message
+QUEUE_NAME: str = 'music'
+QUEUE_CHANNEL: TextChannel | None = None
+QUEUE_MESSAGE: Message | None = None
+QUEUE_UPDATE: Queue[None] = Queue()
+
 
 class SmurfAbortion(Client):
 
     async def on_ready(self):
+        global QUEUE_CHANNEL
+
+        for guild in client.guilds:
+            for channel in guild.text_channels:
+                if channel.name == QUEUE_NAME:
+                    QUEUE_CHANNEL = channel
+
         await tree.sync()
 
         try:
@@ -34,9 +53,14 @@ class SmurfAbortion(Client):
         except RuntimeError:
             ...
 
+        try:
+            self.update_queue.start()
+        except RuntimeError:
+            ...
+
     @discord.ext.tasks.loop(seconds=0)
     async def play_music(self):
-        interaction, info = await music_queue.get()
+        interaction, info = await queue_get()
 
         # Don't do anything if the user is not in a channel.
         if (channel := get_channel(interaction)) is None:
@@ -58,14 +82,53 @@ class SmurfAbortion(Client):
         await connection.disconnect()
         music_queue.task_done()
 
+    @discord.ext.tasks.loop(seconds=0)
+    async def update_queue(self):
+        global QUEUE_MESSAGE
+        assert QUEUE_CHANNEL is not None
 
-music_queue: Queue[tuple[Interaction, dict]] = Queue()
+        await QUEUE_UPDATE.get()
+
+        # Time to update the message!
+
+        embeds: list[Embed] = [make_embed(info) for _, info in music_list[:5]]
+
+        if not embeds:
+            if QUEUE_MESSAGE is not None:
+                await QUEUE_MESSAGE.delete()
+                QUEUE_MESSAGE = None
+            return
+
+        # After this point, I want to send the message.
+
+        if QUEUE_MESSAGE is None:
+            QUEUE_MESSAGE = await QUEUE_CHANNEL.send(embeds=embeds, silent=True)
+            return
+
+        is_latest = False
+        async for message in QUEUE_CHANNEL.history(limit=1):
+            is_latest = message.id == QUEUE_MESSAGE.id
+
+        if is_latest:
+            await QUEUE_MESSAGE.edit(embeds=embeds)
+        else:
+            await QUEUE_MESSAGE.delete()
+            QUEUE_MESSAGE = await QUEUE_CHANNEL.send(embeds=embeds, silent=True)
+
+
+# music_queue and music_list are coupled, hence should always have the same number of elements.
+# music_queue is used to efficiently wait for something to play.
+# music_list carries the actual information, and is used to display the queue.
+# please append to music_list before pushing to music_queue.
+# there's probably a better way to do this, but I do not know it.
+music_queue: Queue[None] = Queue()
+music_list: list[tuple[Interaction, dict]] = []
+
 skip_queue: Queue[Interaction] = Queue()
 
 intents = Intents.default()
 intents.message_content = True
 
-# TODO: Add always updating queue at bottom of channel.
 client = SmurfAbortion(intents=intents)
 tree = discord.app_commands.CommandTree(client)
 
@@ -87,10 +150,10 @@ async def command_play(interaction: Interaction, query: str):
             await interaction.edit_original_response(content='Stop griefing me (too long).')
             return
 
-        await interaction.edit_original_response(
-            content='Added `{}` with duration `{:02d}:{:02d}`.'.format(
-                info['title'], *divmod(round(info['duration']), 60)))
-        await music_queue.put((interaction, info))
+        await interaction.edit_original_response(content='Added `{}` with duration `{}`.'.format(
+            info['title'], format_duration(info['duration'])))
+
+        await queue_put((interaction, info))
 
     else:
         await interaction.response.send_message("I'm not listening, lil' bro.",
@@ -114,14 +177,20 @@ async def command_skip(interaction: Interaction):
                                                 silent=True)
 
 
-def get_channel(interaction: Interaction) -> VoiceChannel | None:
-    if not isinstance(user := interaction.user, Member):
-        return None
-    if (voice := user.voice) is None:
-        return None
-    if not isinstance(channel := voice.channel, VoiceChannel):
-        return None
-    return channel
+async def queue_get():
+    await music_queue.get()
+    element = music_list.pop(0)
+
+    await QUEUE_UPDATE.put(None)
+
+    return element
+
+
+async def queue_put(element):
+    music_list.append(element)
+    await music_queue.put(None)
+
+    await QUEUE_UPDATE.put(None)
 
 
 async def ydl_extract_info(query: str) -> dict:
@@ -152,6 +221,21 @@ async def ydl_download(url: str) -> bool:
     return os.path.exists(PLAY_FILE) and os.path.getmtime(PLAY_FILE) > download_time
 
 
+def format_duration(duration: float) -> str:
+    hour, remainder = divmod(duration, 3600)
+    return ['', f'{hour}:'][hour > 0] + '{:02d}:{:02d}'.format(*divmod(round(remainder), 60))
+
+
+def get_channel(interaction: Interaction) -> VoiceChannel | None:
+    if not isinstance(user := interaction.user, Member):
+        return None
+    if (voice := user.voice) is None:
+        return None
+    if not isinstance(channel := voice.channel, VoiceChannel):
+        return None
+    return channel
+
+
 def get_play_users() -> set[int]:
     with open('PLAY_USERS') as fp:
         return {int(s.strip()) for s in fp.readlines()}
@@ -160,6 +244,14 @@ def get_play_users() -> set[int]:
 def get_skip_users() -> set[int]:
     with open('SKIP_USERS') as fp:
         return {int(s.strip()) for s in fp.readlines()}
+
+
+def make_embed(info: dict) -> Embed:
+    embed = Embed(title=info['title'])
+    embed.add_field(name='URL', value=info['webpage_url'])
+    embed.add_field(name='Duration', value=format_duration(info['duration']))
+    embed.set_thumbnail(url=info['thumbnail'])
+    return embed
 
 
 if __name__ == '__main__':
