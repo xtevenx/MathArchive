@@ -140,7 +140,7 @@ class SmurfAbortion(Client):
 
         if QUEUE_MESSAGE is None:
             QUEUE_MESSAGE = await QUEUE_CHANNEL.send(content=queue_text,
-                                                     view=MusicApplet(),
+                                                     view=MusicApplet(timeout=None),
                                                      silent=True)
         else:
             await QUEUE_MESSAGE.edit(content=queue_text)
