@@ -136,7 +136,7 @@ class SmurfAbortion(Client):
         try:
             while True:
                 remaining_time = (info['duration'] + start_time - time.monotonic(),
-                                  None)[connection.is_paused()]
+                                  None)[not connection.is_playing()]
 
                 skip_amount = await asyncio.wait_for(skip_queue.get(), remaining_time)
 
