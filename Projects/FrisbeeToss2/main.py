@@ -18,13 +18,14 @@ from discord import (
     Interaction,
     Member,
     Message,
+    NotFound,
     TextChannel,
     VoiceChannel,
 )
 from ffmpeg_normalize import FFmpegNormalize
 from yt_dlp import YoutubeDL
 
-PLAY_FILE: str = '/tmp/FrisbeeToss2-processed.mka'
+PLAY_FILE: str = '/tmp/FrisbeeToss2-processed'
 TEMP_FILE: str = '/tmp/FrisbeeToss2-temporary'
 
 # Options for yt_dlp.
@@ -54,6 +55,14 @@ class MusicApplet(discord.ui.View):
 
 
 class SmurfAbortion(Client):
+
+    async def close(self):
+        try:
+            _ = QUEUE_MESSAGE is not None and await QUEUE_MESSAGE.delete()
+        except NotFound:
+            ...
+
+        await super().close()
 
     async def on_ready(self):
         global QUEUE_CHANNEL
