@@ -21,11 +21,12 @@ from discord import (
     NotFound,
     TextChannel,
     VoiceChannel,
+    VoiceClient,
 )
 from ffmpeg_normalize import FFmpegNormalize
 from yt_dlp import YoutubeDL
 
-PLAY_FILE: str = '/tmp/FrisbeeToss2-processed'
+PLAY_FILE: str = '/tmp/FrisbeeToss2-processed.mka'
 TEMP_FILE: str = '/tmp/FrisbeeToss2-temporary'
 
 # Options for yt_dlp.
@@ -47,11 +48,29 @@ QUEUE_UPDATE: Queue[None] = Queue()
 
 class MusicApplet(discord.ui.View):
 
-    @discord.ui.button(label='Skip')
+    @discord.ui.button(emoji='⏪', style=discord.ButtonStyle.secondary)
+    async def reverse_callback(self, interaction: discord.interactions.Interaction,
+                               _: discord.ui.Button):
+        await interaction.response.send_message('Fast reverse...', ephemeral=True, silent=True)
+        await skip_queue.put(-15)
+
+    @discord.ui.button(emoji='⏯️', style=discord.ButtonStyle.secondary)
+    async def pause_callback(self, interaction: discord.interactions.Interaction,
+                             _: discord.ui.Button):
+        await interaction.response.send_message('Playing/pausing...', ephemeral=True, silent=True)
+        await skip_queue.put(0)
+
+    @discord.ui.button(emoji='⏩', style=discord.ButtonStyle.secondary)
+    async def forward_callback(self, interaction: discord.interactions.Interaction,
+                               _: discord.ui.Button):
+        await interaction.response.send_message('Fast forward...', ephemeral=True, silent=True)
+        await skip_queue.put(+15)
+
+    @discord.ui.button(label='Skip', style=discord.ButtonStyle.secondary)
     async def skip_callback(self, interaction: discord.interactions.Interaction,
                             _: discord.ui.Button):
         await interaction.response.send_message('Skipping...', ephemeral=True, silent=True)
-        await skip_queue.put(0)
+        await skip_queue.put(None)
 
 
 class SmurfAbortion(Client):
@@ -99,20 +118,48 @@ class SmurfAbortion(Client):
             return
 
         connection = await channel.connect()
-        connection.play(discord.FFmpegPCMAudio(PLAY_FILE))
+        self._play_music(connection)
 
         await QUEUE_UPDATE.put(None)
 
         try:
             while True:
                 skip_queue.get_nowait()
+                skip_queue.task_done()
         except asyncio.QueueEmpty:
             ...
 
+        # Modify start_time to keep track of how much has been played.
+        start_time = time.monotonic()
+        pause_time = 0
+
         try:
-            # TODO: Make this manage skip types.
-            await asyncio.wait_for(skip_queue.get(), info['duration'])
-            skip_queue.task_done()
+            while True:
+                remaining_time = (info['duration'] + start_time - time.monotonic(),
+                                  None)[connection.is_paused()]
+
+                skip_amount = await asyncio.wait_for(skip_queue.get(), remaining_time)
+
+                if skip_amount is None:
+                    skip_queue.task_done()
+                    break
+
+                if skip_amount:
+                    start_time = max(start_time - skip_amount, time.monotonic() - info['duration'])
+                    connection.stop()
+
+                    self._play_music(connection, start_time)
+
+                else:
+                    if connection.is_playing():
+                        pause_time = time.monotonic()
+                        connection.stop()
+                    else:
+                        start_time += time.monotonic() - pause_time
+                        self._play_music(connection, start_time)
+
+                skip_queue.task_done()
+
         except asyncio.TimeoutError:
             ...
 
@@ -120,6 +167,10 @@ class SmurfAbortion(Client):
         music_queue.task_done()
 
         await QUEUE_UPDATE.put(None)
+
+    def _play_music(self, connection: VoiceClient, start_time: float | None = None):
+        seek_amount = time.monotonic() - (start_time or time.monotonic())
+        connection.play(discord.FFmpegPCMAudio(PLAY_FILE, before_options=f'-ss {seek_amount:.3f}'))
 
     @discord.ext.tasks.loop(seconds=0)
     async def update_queue(self):
@@ -231,7 +282,7 @@ async def ydl_download(url: str) -> bool:
     loop = asyncio.get_running_loop()
 
     # If file not changed later, then download or normalize failed, so return the failure.
-    download_time = time.time()
+    download_time = os.path.getmtime(PLAY_FILE) if os.path.exists(PLAY_FILE) else 0
 
     with YoutubeDL(YDL_OPTIONS) as ydl:
         await loop.run_in_executor(None, ydl.download, [url])
