@@ -48,28 +48,33 @@ QUEUE_UPDATE: Queue[None] = Queue()
 
 class MusicApplet(discord.ui.View):
 
+    async def interaction_check(self, interaction: discord.interactions.Interaction):
+        if (channel := get_channel(interaction)) is None:
+            return False
+        return client.user is not None and client.user.id in {m.id for m in channel.members}
+
     @discord.ui.button(emoji='⏪', style=discord.ButtonStyle.secondary)
     async def reverse_callback(self, interaction: discord.interactions.Interaction,
                                _: discord.ui.Button):
-        await interaction.response.send_message('Fast reverse...', ephemeral=True, silent=True)
+        await interaction.response.defer()
         await skip_queue.put(-15)
 
     @discord.ui.button(emoji='⏯️', style=discord.ButtonStyle.secondary)
     async def pause_callback(self, interaction: discord.interactions.Interaction,
                              _: discord.ui.Button):
-        await interaction.response.send_message('Playing/pausing...', ephemeral=True, silent=True)
+        await interaction.response.defer()
         await skip_queue.put(0)
 
     @discord.ui.button(emoji='⏩', style=discord.ButtonStyle.secondary)
     async def forward_callback(self, interaction: discord.interactions.Interaction,
                                _: discord.ui.Button):
-        await interaction.response.send_message('Fast forward...', ephemeral=True, silent=True)
+        await interaction.response.defer()
         await skip_queue.put(+15)
 
     @discord.ui.button(label='Skip', style=discord.ButtonStyle.secondary)
     async def skip_callback(self, interaction: discord.interactions.Interaction,
                             _: discord.ui.Button):
-        await interaction.response.send_message('Skipping...', ephemeral=True, silent=True)
+        await interaction.response.defer()
         await skip_queue.put(None)
 
 
@@ -82,6 +87,12 @@ class SmurfAbortion(Client):
             ...
 
         await super().close()
+
+    async def on_message(self, message: Message):
+        assert self.user is not None
+
+        if self.user.id != message.author.id:
+            await QUEUE_UPDATE.put(None)
 
     async def on_ready(self):
         global QUEUE_CHANNEL
@@ -242,12 +253,6 @@ async def command_play(interaction: Interaction, query: str):
             info['title'], format_duration(info['duration'])))
     finally:
         await queue_put((interaction, info))
-
-
-@tree.command(name='skip', description='Skip this current piece of audio.')
-async def command_skip(interaction: Interaction):
-    await interaction.response.send_message('Skipping...', ephemeral=True, silent=True)
-    await skip_queue.put(0)
 
 
 async def queue_get():
