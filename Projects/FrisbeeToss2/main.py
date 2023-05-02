@@ -43,7 +43,9 @@ YDL_OPTIONS = {
 QUEUE_NAME: str = 'music'
 QUEUE_CHANNEL: TextChannel | None = None
 QUEUE_MESSAGE: Message | None = None
-QUEUE_UPDATE: Queue[None] = Queue()
+# if True, then we want to send a new queue message (and delete old if necessary).
+# we get a False in on_ready(), so if this is True, we assume that QUEUE_MESSAGE not None.
+QUEUE_UPDATE: Queue[bool] = Queue()
 
 
 class MusicApplet(discord.ui.View):
@@ -51,7 +53,7 @@ class MusicApplet(discord.ui.View):
     async def interaction_check(self, interaction: discord.interactions.Interaction):
         if (channel := get_channel(interaction)) is None:
             return False
-        return client.user is not None and client.user.id in {m.id for m in channel.members}
+        return client.user in channel.members
 
     @discord.ui.button(emoji='⏪', style=discord.ButtonStyle.secondary)
     async def reverse_callback(self, interaction: discord.interactions.Interaction,
@@ -91,8 +93,8 @@ class SmurfAbortion(Client):
     async def on_message(self, message: Message):
         assert self.user is not None
 
-        if self.user.id != message.author.id:
-            await QUEUE_UPDATE.put(None)
+        if message.channel == QUEUE_CHANNEL and message.author != self.user:
+            await QUEUE_UPDATE.put(True)
 
     async def on_ready(self):
         global QUEUE_CHANNEL
@@ -115,7 +117,8 @@ class SmurfAbortion(Client):
         except RuntimeError:
             ...
 
-        await QUEUE_UPDATE.put(None)
+        # This is quite important (see note by definition of QUEUE_UPDATE) for more info.
+        await QUEUE_UPDATE.put(False)
 
     @discord.ext.tasks.loop(seconds=0)
     async def play_music(self):
@@ -135,7 +138,7 @@ class SmurfAbortion(Client):
         # TODO: Add a currently playing (or paused) display to the queue.
         # We should also need to add stuff in the loop below.
 
-        await QUEUE_UPDATE.put(None)
+        await QUEUE_UPDATE.put(False)
 
         try:
             while True:
@@ -154,6 +157,8 @@ class SmurfAbortion(Client):
                                   None)[not connection.is_playing()]
 
                 skip_amount = await asyncio.wait_for(skip_queue.get(), remaining_time)
+
+                # NOTE: We can use a switch-case in Python 3.10
 
                 if skip_amount is None:
                     skip_queue.task_done()
@@ -183,7 +188,7 @@ class SmurfAbortion(Client):
         await connection.disconnect()
         music_queue.task_done()
 
-        await QUEUE_UPDATE.put(None)
+        await QUEUE_UPDATE.put(False)
 
     def _play_music(self, connection: VoiceClient, start_time: float | None = None):
         seek_amount = time.monotonic() - (start_time or time.monotonic())
@@ -194,33 +199,29 @@ class SmurfAbortion(Client):
         global QUEUE_MESSAGE
         assert QUEUE_CHANNEL is not None
 
-        await QUEUE_UPDATE.get()
+        resend = await QUEUE_UPDATE.get()
 
-        # Delete the old message if necessary.
+        lines = ('`{}` with duration `{}`'.format(info['title'], format_duration(info['duration']))
+                 for _, info in music_list)
+        queue_text = '**Queue**\n' + '\n'.join(f'{i + 1}. {line}' for i, line in enumerate(lines))
 
-        if QUEUE_MESSAGE is not None:
-            is_latest = False
-            async for message in QUEUE_CHANNEL.history(limit=1):
-                is_latest = message.id == QUEUE_MESSAGE.id
+        send_coroutine = QUEUE_CHANNEL.send(content=queue_text,
+                                            view=MusicApplet(timeout=None),
+                                            silent=True)
 
-            if not is_latest:
-                try:
-                    await QUEUE_MESSAGE.delete()
-                finally:
-                    QUEUE_MESSAGE = None
+        if resend:
+            assert QUEUE_MESSAGE is not None
+            msg, _ = await asyncio.gather(send_coroutine,
+                                          QUEUE_MESSAGE.delete(),
+                                          return_exceptions=True)
+            QUEUE_MESSAGE = [None, msg][type(msg) is Message]
 
-        # Time to make a new message!
+        elif QUEUE_MESSAGE is None:
+            QUEUE_MESSAGE = await send_coroutine
 
-        queue_text = '**Queue**\n' + '\n'.join('{}. `{}` with duration `{}`'.format(
-            i + 1, info['title'], format_duration(info['duration']))
-                                               for i, (_, info) in enumerate(music_list[:5]))
-
-        if QUEUE_MESSAGE is None:
-            QUEUE_MESSAGE = await QUEUE_CHANNEL.send(content=queue_text,
-                                                     view=MusicApplet(timeout=None),
-                                                     silent=True)
         else:
             await QUEUE_MESSAGE.edit(content=queue_text)
+            send_coroutine.close()
 
 
 # music_queue and music_list are coupled, hence should always have the same number of elements.
@@ -265,7 +266,7 @@ async def queue_get():
     await music_queue.get()
     element = music_list.pop(0)
 
-    await QUEUE_UPDATE.put(None)
+    await QUEUE_UPDATE.put(False)
 
     return element
 
@@ -274,7 +275,7 @@ async def queue_put(element):
     music_list.append(element)
     await music_queue.put(None)
 
-    await QUEUE_UPDATE.put(None)
+    await QUEUE_UPDATE.put(False)
 
 
 async def ydl_extract_info(query: str) -> dict:
