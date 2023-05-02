@@ -97,6 +97,7 @@ class SmurfAbortion(Client):
     async def on_ready(self):
         global QUEUE_CHANNEL
 
+        # Find the channel to put the queue.
         for guild in client.guilds:
             for channel in guild.text_channels:
                 if channel.name == QUEUE_NAME:
@@ -130,6 +131,9 @@ class SmurfAbortion(Client):
 
         connection = await channel.connect()
         self._play_music(connection)
+
+        # TODO: Add a currently playing (or paused) display to the queue.
+        # We should also need to add stuff in the loop below.
 
         await QUEUE_UPDATE.put(None)
 
@@ -173,6 +177,8 @@ class SmurfAbortion(Client):
 
         except asyncio.TimeoutError:
             ...
+
+        # TODO: Make optimistically don't disconnect, then only disconnect when no more stuff.
 
         await connection.disconnect()
         music_queue.task_done()
